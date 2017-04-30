@@ -1,0 +1,8 @@
+framework module UMMobClick {
+    header "MobClick.h"
+    header "MobClickGameAnalytics.h"
+    header "MobClickSocialAnalytics.h"
+    export *
+    link "z"
+    link "sqlite3"
+}
