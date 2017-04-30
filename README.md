@@ -255,4 +255,131 @@ end
 
 上述方案中，可能有一些地方比较尴尬，我们将一些需要保留到 Git 中的文件放到了 Pods 中，写好 .gitignore 可以解决这个问题，但执行个 `rm -rf Pods`，顺便还 merge 到了主分支，这还是略尴尬了。
 
-我们还可以考虑把这些移出来，放到项目的根目录中。但这样可能会在根目录有一堆的 podspec ，这有些不友好。但 podspec 中 `vendored_frameworks` 可以放数组啊。
+我们还可以考虑把这些移出来，放到项目的根目录中。但这样可能会在根目录有一堆的 podspec ，这有些不友好。但 podspec 中 `vendored_frameworks` 可以放数组啊。大致如下，这个 podspec 放到根目录即可。
+
+```ruby
+Pod::Spec.new do |s|
+  s.name             = "AwesomeProject"
+  s.version          = "1"
+  s.summary          = "Use Pods Demo"
+  s.homepage         = "https://github.com/DianQK/DevOnPods"
+  s.license          = { :type => "MIT", :file => "LICENSE" }
+  s.author           = { "DianQK" => "dianqk@icloud.com" }
+  s.source           = { :git => "https://github.com/DianQK/DevOnPods.git",
+                         :tag => s.version.to_s }
+  s.ios.deployment_target = "8.0"
+  s.vendored_frameworks = ["Pods/Carthage/Build/iOS/Then.framework", "Pods/Carthage/Build/iOS/SwiftyJSON.framework"]
+end
+```
+
+我们还可以再多做一些，使用 Subspecs ：
+
+```ruby
+Pod::Spec.new do |s|
+  s.name             = "AwesomeProject"
+  s.version          = "1"
+  s.summary          = "Use Pods Demo"
+  s.homepage         = "https://github.com/DianQK/DevOnPods"
+  s.license          = { :type => "MIT", :file => "LICENSE" }
+  s.author           = { "DianQK" => "dianqk@icloud.com" }
+  s.source           = { :git => "https://github.com/DianQK/DevOnPods.git",
+                         :tag => s.version.to_s }
+  s.ios.deployment_target = "8.0"
+  ['Then', 'SwiftyJSON'].each do |name|
+    s.subspec name do |sp|
+      sp.vendored_frameworks = "Pods/Carthage/Build/iOS/#{name}.framework"
+    end
+  end
+end
+```
+
+这样一来使用的时候就变成了：
+
+```ruby
+target 'AwesomeProject' do
+  use_frameworks!
+  pod 'UMengAnalytics-NO-IDFA', '~> 4.2'
+  case ENV['PODFILE_TYPE']
+  when 'development'
+    pod 'AwesomeProject/Then', :path => "./"
+    pod 'AwesomeProject/SwiftyJSON', :path => "./"
+  else
+    pod 'Then', '~> 2.1'
+    pod 'SwiftyJSON', '~> 3.1'
+  end
+end
+```
+
+虽然多了几行，但感觉似乎更清晰一些了。这也更方便我们管理各种库的依赖，特别是当项目的代码也放到 Pods 中时，这样管理会显得特别有力。
+
+比如，我们可以指定哪些库用源码，那些库直接用 framework 。
+
+```ruby
+target 'AwesomeProject' do
+  use_frameworks!
+  pod 'UMengAnalytics-NO-IDFA', '~> 4.2'
+  framework_pods = []
+  framework_pods = ENV['FRAMEWORK_PODS'].split(",") if ENV['FRAMEWORK_PODS']
+  development = false
+  development = ENV['PODFILE_TYPE'] == 'development' if ENV['PODFILE_TYPE']
+  if development || framework_pods.include?('Then')
+    pod 'AwesomeProject/Then', :path => "./"
+  else
+    pod 'Then', '~> 2.1'
+  end
+  if development || framework_pods.include?('SwiftyJSON')
+    pod 'AwesomeProject/SwiftyJSON', :path => "./"
+  else
+    pod 'SwiftyJSON', '~> 3.1'
+  end
+end
+```
+
+当我们想使用 `Then` 的 framework 时，只需要执行 `env FRAMEWORK_PODS=Then pod install` 。
+
+我们已经完成了几乎所有的事情，但还差一个，build 指定 framework 。毕竟一次 build 全部依赖是一件非常痛苦的事情。
+
+Carthage 在使用了参数 `--no-skip-current` 后，似乎只能 build 全部 share scheme ，既然这样我们可以简单地将不需要 build 的库不 share 。
+
+这里有两种比较合适的做法，在 `generate_module` 方法中进行过滤，或者对不想 build 的库，直接使用本地的 spec ，这样就不会在 Pods 中生成对应的 Target 了，自然也不会去 build 这个库。
+
+我们采取第二种方案，第一种需要额外做一些事情，删除 share scheme ，CocoaPods 不会主动删除 share scheme 。
+
+```ruby
+target 'AwesomeProject' do
+  use_frameworks!
+  pod 'UMengAnalytics-NO-IDFA', '~> 4.2'
+  framework_pods = []
+  framework_pods = ENV['FRAMEWORK_PODS'].split(",") if ENV['FRAMEWORK_PODS']
+  development = false
+  development = ENV['PODFILE_TYPE'] == 'development' if ENV['PODFILE_TYPE']
+  build_pods = []
+  build_pods = ENV['BUILD_PODS'].split(",") if ENV['BUILD_PODS']
+  build_all = true # dev 下忽略 build all 参数
+  if ENV['PODFILE_TYPE'] == 'generate_frameworks'
+    build_all = build_pods.length == 0 # 等于 0 则 build all
+    Pod::UI.puts "Build all" if build_all
+    Pod::UI.puts "Build include #{build_pods}" if !build_all
+  end
+  if (development || framework_pods.include?('Then')) || !(build_pods.include?('Then') || build_all)
+    pod 'AwesomeProject/Then', :path => "./"
+  else
+    pod 'Then', '~> 2.1'
+  end
+  if (development || framework_pods.include?('SwiftyJSON')) || !(build_pods.include?('SwiftyJSON') || build_all)
+    pod 'AwesomeProject/SwiftyJSON', :path => "./"
+  else
+    pod 'SwiftyJSON', '~> 3.1'
+  end
+end
+```
+
+添加一个 `BUILD_PODS` 环境变量，当处于 `generate_frameworks` 的时候，build 对应的库。
+
+以上方案还有一个小的缺陷，`pod install` 被用来 build framework 了。也就是说当 `pod install` 后可能还要再一次的 `pod install`。
+
+比如我们想使用 Then 的 framework ，就需要先 `env PODFILE_TYPE=generate_frameworks BUILD_PODS=Then pod install`，再执行 `env FRAMEWORK_PODS=Then pod install`。
+
+这个问题，结合 Fastlane 是个不错的选择，还免去了每次都要敲一下 env 。
+
+写到最后我们似乎漏了一件事情，`pod update`，在 update 时，build 新的 framework ，甚至是对于 pod install 中对 framework 进行 cache 。结合 CocoaPods 的文档和 Ruby 大法，这应该也不是一件非常复杂的事情。

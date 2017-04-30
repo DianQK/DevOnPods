@@ -3,11 +3,26 @@ platform :ios, '9.0'
 target 'AwesomeProject' do
   use_frameworks!
   pod 'UMengAnalytics-NO-IDFA', '~> 4.2'
-  case ENV['PODFILE_TYPE']
-  when 'development'
-    pod 'AwesomeProject', :path => "./"
+  framework_pods = []
+  framework_pods = ENV['FRAMEWORK_PODS'].split(",") if ENV['FRAMEWORK_PODS']
+  development = false
+  development = ENV['PODFILE_TYPE'] == 'development' if ENV['PODFILE_TYPE']
+  build_pods = []
+  build_pods = ENV['BUILD_PODS'].split(",") if ENV['BUILD_PODS']
+  build_all = true # dev 下忽略 build all 参数
+  if ENV['PODFILE_TYPE'] == 'generate_frameworks'
+    build_all = build_pods.length == 0 # 等于 0 则 build all
+    Pod::UI.puts "Build all" if build_all
+    Pod::UI.puts "Build include #{build_pods}" if !build_all
+  end
+  if (development || framework_pods.include?('Then')) || !(build_pods.include?('Then') || build_all)
+    pod 'AwesomeProject/Then', :path => "./"
   else
     pod 'Then', '~> 2.1'
+  end
+  if (development || framework_pods.include?('SwiftyJSON')) || !(build_pods.include?('SwiftyJSON') || build_all)
+    pod 'AwesomeProject/SwiftyJSON', :path => "./"
+  else
     pod 'SwiftyJSON', '~> 3.1'
   end
 end
