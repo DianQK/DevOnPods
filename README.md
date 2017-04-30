@@ -1,12 +1,107 @@
-# DevOnPods
-
-- 将 UMeng 支持 module .
-- 同一 target 环境切换
-- Plugin
-- 基于 CocoaPods 开发
+# 基于 CocoaPods 进行 iOS 开发
 
 在阅读本文前，请谨记 `Podfile` 是一段 Ruby 代码（如果您对 Ruby 有一点语法上的了解，这将会非常有帮主，笔者有着一年前的看了 2 小时的 Ruby 基础还是够的），这对于我们定制以下的需求将非常有帮助。
 
+本文有三个部分：
+
+- 创建 module.modulemap ，介绍了如何友好地在 Swift 项目中使用 Umeng 的 SDK
+- 使用环境变量，介绍了如何利用 ENV 配置更灵活的场景
+- CocoaPods Plugin，标题虽说是 Plugin ，但主要介绍了如何基于 CocoaPods 进行 iOS 开发，特别是将依赖进行 Framework 化，特定第三方库进行 Framework。
+
+您可以先来体验一下 repo 中的 demo 。
+
+执行 `fastlane pod_generate_frameworks` ，将所有第三方库 Framework 化并引用。
+
+项目截图如下：
+
+![](https://raw.githubusercontent.com/DianQK/DevOnPods/master/.imgs/pod_generate_frameworks.png)
+
+此时这个项目引用的第三方库都是 Framework 化的了。
+
+接下来执行 `fastlane pod_frameworks frameworks:Then`，您可以看到项目中仅有 Then 是引用了 Framework ：
+
+![](https://raw.githubusercontent.com/DianQK/DevOnPods/master/.imgs/pod_frameworks_then.png)
+
+再执行 `fastlane pod_source`，你可以看到项目中所有 pod 都引用了源码（原工程）：
+
+![](https://raw.githubusercontent.com/DianQK/DevOnPods/master/.imgs/pod_source.png)
+
+## 创建 module.modulemap
+
+在项目集成 Umeng 或者 Bugtags 时，按照文档的指示，在 Swift 工程中我们需要创建桥接文件。事实上这不是必须的。我们完全可以创建对应的 `module.modulemap` ，采用 `import UMMobClick` 的方式使用。而 Umeng 或者 Bugtags 不像 Fabric 可以直接在 Swift 工程中使用的原因也是如此。
+
+那么如何在 Pods 中增加 module 文件就成了一个问题，总不能手动创建一个，直接移进去。这样会导致 `pod install` 时可能丢失该文件。
+
+从 Umeng 的 podspec 中可以知道，Umeng 的库是直接 http 形式下载的。
+
+```ruby
+s.source              = { :http => "http://dev.umeng.com/system/resources/W1siZiIsIjIwMTcvMDEvMjIvMTFfMDNfMjRfNzM0X3Vtc2RrX0lPU19hbmFseWljc19ub19pZGZhX3Y0LjIuNS56aXAiXV0/umsdk_IOS_analyics_no-idfa_v4.2.5.zip" }
+```
+
+我们创建一个新的 podspec ，并修改这个 zip 中的文件，但这又带来一个问题。如何维护 podspec 和 zip 文件。
+
+podspec 是提供了一个 `prepare_command` ，我们可以在下载库文件完成时，执行一个脚本。这样就好办了很多：
+
+```ruby
+Pod::Spec.new do |s|
+  s.name                = "UMengAnalytics-NO-IDFA"
+  s.version             = "4.2.5"
+  s.summary             = "UMeng's unofficial Analytics SDK for iOS"
+  s.homepage            = "http://dev.umeng.com/analytics/ios/quick-start"
+  s.author              = { "DianQK" => "dianqk@icloud.com" }
+  s.platform            = :ios, "8.0"
+  s.source              = { :http => "http://dev.umeng.com/system/resources/W1siZiIsIjIwMTcvMDEvMjIvMTFfMDNfMjRfNzM0X3Vtc2RrX0lPU19hbmFseWljc19ub19pZGZhX3Y0LjIuNS56aXAiXV0/umsdk_IOS_analyics_no-idfa_v4.2.5.zip" }
+  s.vendored_frameworks = "*/UMMobClick.framework"
+  s.framework           = "CoreTelephony"
+  s.libraries           = "sqlite3", "z"
+  s.requires_arc        = false
+  s.xcconfig            = { "LIBRARY_SEARCH_PATHS" => "\"$(PODS_ROOT)/UMengAnalytics-NO-IDFA/**\"" }
+  s.prepare_command     = <<-EOF
+  mkdir umsdk_IOS_analyics_no-idfa_v4.2.5/UMMobClick.framework/Modules
+  touch umsdk_IOS_analyics_no-idfa_v4.2.5/UMMobClick.framework/Modules/module.modulemap
+  cat <<-EOF > umsdk_IOS_analyics_no-idfa_v4.2.5/UMMobClick.framework/Modules/module.modulemap
+  framework module UMMobClick {
+      header "MobClick.h"
+      header "MobClickGameAnalytics.h"
+      header "MobClickSocialAnalytics.h"
+      export *
+      link "z"
+      link "sqlite3"
+  }
+  \EOF
+  EOF
+end
+```
+
+在使用时，我们需要引用对应的 podspec （使用 `git` `path` 可能无法达到预期效果）。
+
+```ruby
+platform :ios, '9.0'
+
+target 'Demo' do
+  pod 'UMengAnalytics-NO-IDFA', :podspec => "https://raw.githubusercontent.com/DianQK/UMengAnalytics-NO-IDFA-Module/master/UMengAnalytics-NO-IDFA.podspec"
+end
+```
+
+这样一来我们就可以愉快滴在 Swift 工程中调用 `import UMMobClick` 了。
+
+## 使用环境变量
+
+既然 Podfile 是一段 Ruby 代码，那么我们就可以在 Podfile 中使用 `ENV` 环境变量，这将对我们的开发体验有极大改善。比如，对同一个 Target 使用不同的 pod ：
+
+```ruby
+target 'AwesomeProject' do
+  use_frameworks!
+  case ENV['PODFILE_TYPE']
+  when 'development'
+    pod 'Then'
+  else
+    pod 'Then', :path => './'
+  end
+end
+```
+
+执行 `pod install` 将使用 CocoaPods 上的 Then ，执行 `env PODFILE_TYPE=development pod install` 将使用本地的 Then 。
 
 ## CocoaPods Plugin
 
@@ -117,10 +212,12 @@ end
 
 在这里我们遍历了 Pods 工程中的所有 Target ，设置 Swift 版本为 3.0 。需要注意的是，CocoaPods 是执行完 `post_install` 才生成 Project ，在这一步可能获取不到 Pods 工程的文件。
 
-## 打 Log
+### 打 Log
 
 在 CocoaPods 中输出一些内容有两种方式，直接调用 `puts` ，这只会在 `--verbose` 下看到输出结果。
 调用 `Pod::UI.puts` 则会在所有场景下有输出结果。
+
+### Hook post_install 拷贝 module.modulemap
 
 那么我们是不是也可以在这里进行一些文件操作呢？当然可以，我们可以在 Umeng 的 modulemap 文件。
 
@@ -160,7 +257,7 @@ CocoaPods 中已有的一些插件就是采用 Hook 的方法：
 - [cocoapods-deintegrate](https://github.com/CocoaPods/cocoapods-deintegrate) 移除 Pod
 - [cocoapods-deploy](https://github.com/jcampbell05/cocoapods-deploy) 加快 `pod install`
 
-## 基于 CocoaPods 开发
+### 基于 CocoaPods 开发，生成 Framework
 
 随着工程变得越来越大，或者是您选择了 Swift ，都会遇到编译时间较长的问题，特别是在选择 Swift 后。
 
@@ -272,6 +369,8 @@ Pod::Spec.new do |s|
 end
 ```
 
+### 拆分 spec
+
 我们还可以再多做一些，使用 Subspecs ：
 
 ```ruby
@@ -312,6 +411,8 @@ end
 
 虽然多了几行，但感觉似乎更清晰一些了。这也更方便我们管理各种库的依赖，特别是当项目的代码也放到 Pods 中时，这样管理会显得特别有力。
 
+### 指定使用 Framework
+
 比如，我们可以指定哪些库用源码，那些库直接用 framework 。
 
 ```ruby
@@ -337,7 +438,9 @@ end
 
 当我们想使用 `Then` 的 framework 时，只需要执行 `env FRAMEWORK_PODS=Then pod install` 。
 
-我们已经完成了几乎所有的事情，但还差一个，build 指定 framework 。毕竟一次 build 全部依赖是一件非常痛苦的事情。
+### build 指定 Framework
+
+我们已经完成了几乎所有的事情，但还差一个，build 指定 Framework 。毕竟一次 build 全部依赖是一件非常痛苦的事情。
 
 Carthage 在使用了参数 `--no-skip-current` 后，似乎只能 build 全部 share scheme ，既然这样我们可以简单地将不需要 build 的库不 share 。
 
@@ -382,4 +485,13 @@ end
 
 这个问题，结合 Fastlane 是个不错的选择，还免去了每次都要敲一下 env 。
 
+以上都只提到了引用第三方库，其实我们的代码也是类似的道理，创建好对应模块的工程，采用 CocoaPods 管理。示例项目中的 `AwesomeModule` 就是这样做的。
+
 写到最后我们似乎漏了一件事情，`pod update`，在 update 时，build 新的 framework ，甚至是对于 pod install 中对 framework 进行 cache 。结合 CocoaPods 的文档和 Ruby 大法，这应该也不是一件非常复杂的事情。
+
+## 总结
+
+我们通过对修改 podspec 和 Podfile 达到了很多我们需要的功能，增加 `modulemap` 、通过 ENV 配置不同依赖、通过 Hook 配置项目引用源码还是 Framework 。
+
+事实上，在 http://www.rubydoc.info/gems/cocoapods 和 https://guides.cocoapods.org 中还有很多内容值得去看，
+比如 https://guides.cocoapods.org/using/the-podfile.html 、https://github.com/artsy/eigen/blob/master/Podfile 、https://github.com/CocoaPods/CocoaPods/tree/master/examples ，这些通常能解决您在使用 CocoaPods 遇到的绝大多数问题。

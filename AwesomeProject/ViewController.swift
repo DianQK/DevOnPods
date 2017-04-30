@@ -10,12 +10,14 @@ import UIKit
 import Then
 import UMMobClick
 import SwiftyJSON
+import AwesomeModule
 
 class ViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
         // Do any additional setup after loading the view, typically from a nib.
+        AwesomeModule().run()
     }
 
     override func didReceiveMemoryWarning() {
@@ -25,4 +27,21 @@ class ViewController: UIViewController {
 
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

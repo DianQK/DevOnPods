@@ -25,6 +25,11 @@ target 'AwesomeProject' do
   else
     pod 'SwiftyJSON', '~> 3.1'
   end
+  if (development || framework_pods.include?('AwesomeModule')) || !(build_pods.include?('AwesomeModule') || build_all)
+    pod 'AwesomeProject/AwesomeModule', :path => "./"
+  else
+    pod 'AwesomeModule', :path => './'
+  end
 end
 
 post_install do |installer|
